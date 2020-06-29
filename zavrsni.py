@@ -1,21 +1,21 @@
 import gym
-import random
 import numpy as np
-from PIL.Image import core as _imaging
+import cv2
 import tflearn
 from tflearn.layers.core import input_data, dropout, fully_connected
 from tflearn.layers.estimator import regression
 from tflearn.layers.conv import conv_2d, max_pool_2d
+from tflearn.layers.normalization import local_response_normalization
 from statistics import mean, median
 from collections import Counter
 
-LR = 2.5e-3
+LR = 1e-3
 env = gym.make('Qbert-v0')
 print(env.observation_space)
 print(env.action_space)
 env.reset()
-goal_steps = 500
-score_requirement = 200
+goal_steps = 1000
+score_requirement = 250
 initial_games = 1000
 
 
@@ -40,6 +40,9 @@ def initial_population():
             action = env.action_space.sample()
             # do it!
             observation, reward, done, info = env.step(action)
+            inx, iny, inc = env.observation_space.shape
+
+            observation = cv2.resize(cv2.cvtColor(observation, cv2.COLOR_RGBA2GRAY), (int(inx/8), int(iny/8)))
 
             # notice that the observation is returned FROM the action
             # so we'll store the previous observation here, pairing
@@ -95,43 +98,39 @@ def initial_population():
     return training_data
 
 
-def neural_network_model():
-    convnet = input_data(shape=[None, 210, 160, 3], name='input')
+def neural_network_model(input_size, input_size2):
+    network = input_data(shape=[None, input_size, input_size2, 1], name='input')
 
-    convnet = conv_2d(convnet, 32, 2, activation='relu')
-    convnet = max_pool_2d(convnet, 2)
+    network = conv_2d(network, 96, 11, strides=4, activation='relu')
+    network = local_response_normalization(network)
+    network = conv_2d(network, 256, 5, activation='relu')
+    network = local_response_normalization(network)
+    network = conv_2d(network, 384, 3, activation='relu')
+    network = conv_2d(network, 384, 3, activation='relu')
+    network = conv_2d(network, 256, 3, activation='relu')
+    network = local_response_normalization(network)
+    network = fully_connected(network, 4096, activation='tanh')
+    network = dropout(network, 0.5)
+    network = fully_connected(network, 4096, activation='tanh')
+    network = dropout(network, 0.5)
 
-    convnet = conv_2d(convnet, 64, 2, activation='relu')
-    convnet = max_pool_2d(convnet, 2)
 
-    convnet = fully_connected(convnet, 128, activation='relu')
-    convnet = dropout(convnet, 0.8)
-
-    convnet = fully_connected(convnet, 256, activation='relu')
-    convnet = dropout(convnet, 0.8)
-
-    convnet = fully_connected(convnet, 512, activation='relu')
-    convnet = dropout(convnet, 0.8)
-
-    convnet = fully_connected(convnet, 256, activation='relu')
-    convnet = dropout(convnet, 0.8)
-
-    convnet = fully_connected(convnet, 128, activation='relu')
-    convnet = dropout(convnet, 0.8)
-
-    convnet = fully_connected(convnet, 6, activation='softmax')
-    convnet = regression(convnet, optimizer='adam', learning_rate=LR, loss='categorical_crossentropy', name='targets')
-    model = tflearn.DNN(convnet)
+    network = fully_connected(network, 6, activation='softmax')
+    network = regression(network, optimizer='momentum', learning_rate=LR, loss='categorical_crossentropy', name='targets')
+    model = tflearn.DNN(network)
 
     return model
 
 
 def train_model(training_data, model=False):
-    X = np.array([i[0] for i in training_data]).reshape(-1, 210, 160, 3)
+    print(len(training_data[0]))
+    print(len(training_data[0][0]))
+    print(len(training_data[0][0][0]))
+    X = np.array([i[0] for i in training_data]).reshape(-1, len(training_data[0][0]), len(training_data[0][0][0]), 1)
     y = [i[1] for i in training_data]
 
     if not model:
-        model = neural_network_model()
+        model = neural_network_model(input_size = len(X[0]), input_size2 = len(X[0][0]))
 
     model.fit({'input': X}, {'targets': y}, n_epoch=5, snapshot_step=500, show_metric=True,
               run_id='openai_learning')
@@ -140,7 +139,9 @@ def train_model(training_data, model=False):
 
 training_data = initial_population()
 model = train_model(training_data)
-
+model.save('myModel.tflearn')
+#model = neural_network_model(20 ,26)
+#model.load('myModel.tflearn')
 scores = []
 choices = []
 
@@ -154,10 +155,12 @@ for each_game in range(10):
         if len(prev_obs) == 0:
             action = env.action_space.sample()
         else:
-            action = np.argmax(model.predict(prev_obs.reshape(-1, 210, 160, 3))[0])
+            action = np.argmax(model.predict(prev_obs.reshape(-1, 20, 26, 1))[0])
 
         choices.append(action)
         new_observation, reward, done, info = env.step(action)
+        inx, iny, inc = env.observation_space.shape
+        new_observation = cv2.resize(cv2.cvtColor(new_observation, cv2.COLOR_RGBA2GRAY), (int(inx / 8), int(iny / 8)))
         prev_obs = new_observation
         game_memory.append([new_observation, action])
         score += reward
