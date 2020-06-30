@@ -19,7 +19,7 @@ print(env.action_space)
 env.reset()
 goal_steps = 1000
 score_requirement = 120
-initial_games = 5
+initial_games = 1000
 
 
 def initial_population():
