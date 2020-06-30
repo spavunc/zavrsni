@@ -2,6 +2,8 @@ import gym
 import numpy as np
 import cv2
 import tflearn
+import random
+
 from tflearn.layers.core import input_data, dropout, fully_connected
 from tflearn.layers.estimator import regression
 from tflearn.layers.conv import conv_2d, max_pool_2d
@@ -9,14 +11,15 @@ from tflearn.layers.normalization import local_response_normalization
 from statistics import mean, median
 from collections import Counter
 
+
 LR = 1e-3
-env = gym.make('Qbert-v0')
+env = gym.make('SpaceInvaders-v0')
 print(env.observation_space)
 print(env.action_space)
 env.reset()
 goal_steps = 1000
-score_requirement = 250
-initial_games = 1000
+score_requirement = 120
+initial_games = 5
 
 
 def initial_population():
@@ -37,18 +40,18 @@ def initial_population():
         # for each frame in 200
         for _ in range(goal_steps):
             # choose random action (0 or 1)
-            action = env.action_space.sample()
+            action = random.randrange(1, 4)
             # do it!
             observation, reward, done, info = env.step(action)
             inx, iny, inc = env.observation_space.shape
 
             observation = cv2.resize(cv2.cvtColor(observation, cv2.COLOR_RGBA2GRAY), (int(inx/8), int(iny/8)))
 
+
             # notice that the observation is returned FROM the action
             # so we'll store the previous observation here, pairing
             # the prev observation to the action we'll take.
             if len(prev_observation) > 0:
-                # prev_observation = prev_observation.flatten()
                 game_memory.append([prev_observation, action])
             prev_observation = observation
             score += reward
@@ -65,17 +68,12 @@ def initial_population():
             for data in game_memory:
                 # convert to one-hot (this is the output layer for our neural network)
                 if data[1] == 1:
-                    output = [0, 1, 0, 0, 0, 0]
-                elif data[1] == 0:
-                    output = [1, 0, 0, 0, 0, 0]
+                    output = [1, 0, 0]
                 elif data[1] == 2:
-                    output = [0, 0, 1, 0, 0, 0]
+                    output = [0, 1, 0]
                 elif data[1] == 3:
-                    output = [0, 0, 0, 1, 0, 0]
-                elif data[1] == 4:
-                    output = [0, 0, 0, 0, 1, 0]
-                elif data[1] == 5:
-                    output = [0, 0, 0, 0, 0, 1]
+                    output = [0, 0, 1]
+
 
                 # saving our training data
                 training_data.append([data[0], output])
@@ -88,7 +86,7 @@ def initial_population():
 
     # just in case you wanted to reference later
     training_data_save = np.array(training_data)
-    np.save('atari.npy', training_data_save)
+    np.save('test.npy', training_data_save)
 
     # some stats here, to further illustrate the neural network magic!
     print('Average accepted score:', mean(accepted_scores))
@@ -114,9 +112,9 @@ def neural_network_model(input_size, input_size2):
     network = fully_connected(network, 4096, activation='tanh')
     network = dropout(network, 0.5)
 
-
-    network = fully_connected(network, 6, activation='softmax')
-    network = regression(network, optimizer='momentum', learning_rate=LR, loss='categorical_crossentropy', name='targets')
+    network = fully_connected(network, 3, activation='softmax')
+    network = regression(network, optimizer='momentum', learning_rate=LR, loss='categorical_crossentropy',
+                         name='targets')
     model = tflearn.DNN(network)
 
     return model
@@ -138,13 +136,13 @@ def train_model(training_data, model=False):
 
 
 training_data = initial_population()
+#training_data = np.load('atari.npy')
 model = train_model(training_data)
 model.save('myModel.tflearn')
-#model = neural_network_model(20 ,26)
+#model = neural_network_model(32 ,32)
 #model.load('myModel.tflearn')
 scores = []
 choices = []
-
 for each_game in range(10):
     score = 0
     game_memory = []
@@ -153,16 +151,18 @@ for each_game in range(10):
     for _ in range(goal_steps):
         env.render()
         if len(prev_obs) == 0:
-            action = env.action_space.sample()
+            new_action = random.randrange(1, 4)
         else:
-            action = np.argmax(model.predict(prev_obs.reshape(-1, 20, 26, 1))[0])
+            action = model.predict([prev_obs.reshape(20, 26, 1)])[0]
+            new_action = np.argmax(action)
 
-        choices.append(action)
-        new_observation, reward, done, info = env.step(action)
+
+        choices.append(new_action)
+        new_observation, reward, done, info = env.step(new_action)
         inx, iny, inc = env.observation_space.shape
         new_observation = cv2.resize(cv2.cvtColor(new_observation, cv2.COLOR_RGBA2GRAY), (int(inx / 8), int(iny / 8)))
         prev_obs = new_observation
-        game_memory.append([new_observation, action])
+        game_memory.append([new_observation, new_action])
         score += reward
         if done:
             break
@@ -173,3 +173,4 @@ print('choice 1:{}  choice 0:{}'.format(choices.count(1) / len(choices), choices
 print('choice 2:{}  choice 3:{}'.format(choices.count(2) / len(choices), choices.count(3) / len(choices)))
 print('choice 4:{}  choice 5:{}'.format(choices.count(4) / len(choices), choices.count(5) / len(choices)))
 print(score_requirement)
+
