@@ -78,24 +78,28 @@ def initial_population():
 
 
 def neural_network_model(input_size, input_size2):
-    net = input_data(shape=[None, input_size, input_size2, 1], name='input')
+    network = input_data(shape=[None, input_size, input_size2, 1], name='input')
 
-    net = tflearn.conv_2d(net, 64, 3, activation='relu', bias=False)
-    # Residual blocks
-    net = tflearn.residual_bottleneck(net, 3, 16, 64)
-    net = tflearn.residual_bottleneck(net, 1, 32, 128, downsample=True)
-    net = tflearn.residual_bottleneck(net, 2, 32, 128)
-    net = tflearn.residual_bottleneck(net, 1, 64, 256, downsample=True)
-    net = tflearn.residual_bottleneck(net, 2, 64, 256)
-    net = tflearn.batch_normalization(net)
-    net = tflearn.activation(net, 'relu')
-    net = tflearn.global_avg_pool(net)
-    # Regression
+    network = conv_2d(network, 96, 11, strides=4, activation='relu')
+    network = max_pool_2d(network, 3, strides=2)
+    network = local_response_normalization(network)
+    network = conv_2d(network, 256, 5, activation='relu')
+    network = max_pool_2d(network, 3, strides=2)
+    network = local_response_normalization(network)
+    network = conv_2d(network, 384, 3, activation='relu')
+    network = conv_2d(network, 384, 3, activation='relu')
+    network = conv_2d(network, 256, 3, activation='relu')
+    network = max_pool_2d(network, 3, strides=2)
+    network = local_response_normalization(network)
+    network = fully_connected(network, 4096, activation='tanh')
+    network = dropout(network, 0.5)
+    network = fully_connected(network, 4096, activation='tanh')
+    network = dropout(network, 0.5)
 
-    net = fully_connected(net, 2, activation='softmax')
-    net = regression(net, optimizer='momentum', learning_rate=0.1, loss='categorical_crossentropy',
+    network = fully_connected(network, 2, activation='softmax')
+    network = regression(network, optimizer='momentum', learning_rate=0.01, loss='categorical_crossentropy',
                          name='targets')
-    model = tflearn.DNN(net)
+    model = tflearn.DNN(network)
 
     return model
 
