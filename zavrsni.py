@@ -6,87 +6,68 @@ import random
 
 from tflearn.layers.core import input_data, dropout, fully_connected
 from tflearn.layers.estimator import regression
-from tflearn.layers.conv import conv_2d, max_pool_2d
-from tflearn.layers.normalization import local_response_normalization
+from tflearn.layers.conv import conv_2d, max_pool_2d, highway_conv_2d
+from tflearn.layers.normalization import local_response_normalization, batch_normalization
 from statistics import mean, median
 from collections import Counter
+from ple.games.flappybird import FlappyBird
+from ple.games.catcher import Catcher
+from ple import PLE
 
+game = FlappyBird()
+env = PLE(game, fps=30, display_screen=True)  # environment interface to game
+env.init()
+print(env.getActionSet()) #97 i 100
+#119 za flappy
+print(env.getScreenDims())
 
 LR = 1e-3
-env = gym.make('SpaceInvaders-v0')
-print(env.observation_space)
-print(env.action_space)
-env.reset()
-goal_steps = 1000
-score_requirement = 120
-initial_games = 1000
+#env = gym.make('SpaceInvaders-v0')
+#print(env.observation_space)
+#print(env.action_space)
+#env.reset()
+goal_steps = 500
+score_requirement = -4
+initial_games = 10000
 
 
 def initial_population():
-    # [OBS, MOVES]
     training_data = []
-    # all scores:
     scores = []
-    # just the scores that met our threshold:
     accepted_scores = []
-    # iterate through however many games we want:
     progress = 0
     for _ in range(initial_games):
         score = 0
-        # moves specifically from this environment:
         game_memory = []
-        # previous observation that we saw
-        prev_observation = []
-        # for each frame in 200
         for _ in range(goal_steps):
-            # choose random action (0 or 1)
-            action = random.randrange(1, 4)
-            # do it!
-            observation, reward, done, info = env.step(action)
-            inx, iny, inc = env.observation_space.shape
+            randomNum = random.randint(1, 10)
+            if randomNum == 1:
+                env.act(119)
+                action = 119
+            else:
+                env.act(None)
+                action = None
+            observation = cv2.resize(env.getScreenGrayscale(), (80, 80))
+            game_memory.append([observation, action])
+            score = env.score()
+            if env.game_over(): break
 
-            observation = cv2.resize(cv2.cvtColor(observation, cv2.COLOR_RGBA2GRAY), (int(inx/8), int(iny/8)))
-
-
-            # notice that the observation is returned FROM the action
-            # so we'll store the previous observation here, pairing
-            # the prev observation to the action we'll take.
-            if len(prev_observation) > 0:
-                game_memory.append([prev_observation, action])
-            prev_observation = observation
-            score += reward
-            if done: break
-
-        # IF our score is higher than our threshold, we'd like to save
-        # every move we made
-        # NOTE the reinforcement methodology here.
-        # all we're doing is reinforcing the score, we're not trying
-        # to influence the machine in any way as to HOW that score is
-        # reached.
         if score >= score_requirement:
             accepted_scores.append(score)
             for data in game_memory:
-                # convert to one-hot (this is the output layer for our neural network)
-                if data[1] == 1:
-                    output = [1, 0, 0]
-                elif data[1] == 2:
-                    output = [0, 1, 0]
-                elif data[1] == 3:
-                    output = [0, 0, 1]
-
-
-                # saving our training data
+                if data[1] == 119:
+                    output = [1, 0]
+                else:
+                    output = [0, 1]
                 training_data.append([data[0], output])
         progress = progress + 1
         print(progress)
-        # reset env to play again
-        env.reset()
-        # save overall scores
+        env.reset_game()
         scores.append(score)
 
     # just in case you wanted to reference later
     training_data_save = np.array(training_data)
-    np.save('test.npy', training_data_save)
+    np.save('flappy3.npy', training_data_save)
 
     # some stats here, to further illustrate the neural network magic!
     print('Average accepted score:', mean(accepted_scores))
@@ -99,21 +80,20 @@ def initial_population():
 def neural_network_model(input_size, input_size2):
     network = input_data(shape=[None, input_size, input_size2, 1], name='input')
 
-    network = conv_2d(network, 96, 11, strides=4, activation='relu')
-    network = local_response_normalization(network)
-    network = conv_2d(network, 256, 5, activation='relu')
-    network = local_response_normalization(network)
-    network = conv_2d(network, 384, 3, activation='relu')
-    network = conv_2d(network, 384, 3, activation='relu')
-    network = conv_2d(network, 256, 3, activation='relu')
-    network = local_response_normalization(network)
-    network = fully_connected(network, 4096, activation='tanh')
-    network = dropout(network, 0.5)
-    network = fully_connected(network, 4096, activation='tanh')
-    network = dropout(network, 0.5)
+    net = tflearn.conv_2d(net, 64, 3, activation='relu', bias=False)
+    # Residual blocks
+    net = tflearn.residual_bottleneck(net, 3, 16, 64)
+    net = tflearn.residual_bottleneck(net, 1, 32, 128, downsample=True)
+    net = tflearn.residual_bottleneck(net, 2, 32, 128)
+    net = tflearn.residual_bottleneck(net, 1, 64, 256, downsample=True)
+    net = tflearn.residual_bottleneck(net, 2, 64, 256)
+    net = tflearn.batch_normalization(net)
+    net = tflearn.activation(net, 'relu')
+    net = tflearn.global_avg_pool(net)
+    # Regression
 
-    network = fully_connected(network, 3, activation='softmax')
-    network = regression(network, optimizer='momentum', learning_rate=LR, loss='categorical_crossentropy',
+    network = fully_connected(network, 2, activation='softmax')
+    network = regression(network, optimizer='momentum', learning_rate=0.1, loss='categorical_crossentropy',
                          name='targets')
     model = tflearn.DNN(network)
 
@@ -121,7 +101,6 @@ def neural_network_model(input_size, input_size2):
 
 
 def train_model(training_data, model=False):
-    print(len(training_data[0]))
     print(len(training_data[0][0]))
     print(len(training_data[0][0][0]))
     X = np.array([i[0] for i in training_data]).reshape(-1, len(training_data[0][0]), len(training_data[0][0][0]), 1)
@@ -130,47 +109,58 @@ def train_model(training_data, model=False):
     if not model:
         model = neural_network_model(input_size = len(X[0]), input_size2 = len(X[0][0]))
 
-    model.fit({'input': X}, {'targets': y}, n_epoch=5, snapshot_step=500, show_metric=True,
+    model.fit({'input': X}, {'targets': y}, n_epoch=10, snapshot_step=500, show_metric=True,
               run_id='openai_learning')
     return model
 
 
+
 training_data = initial_population()
-#training_data = np.load('atari.npy')
+#training_data = np.load('flappy.npy')
 model = train_model(training_data)
-model.save('myModel.tflearn')
-#model = neural_network_model(32 ,32)
-#model.load('myModel.tflearn')
+model.save('flappy.model')
+#model = neural_network_model(36, 64)
+#model.load('flappy.model')
 scores = []
+accepted_scores = []
 choices = []
-for each_game in range(10):
+for each_game in range(1000):
     score = 0
     game_memory = []
     prev_obs = []
-    env.reset()
     for _ in range(goal_steps):
-        env.render()
+        #env.render()
         if len(prev_obs) == 0:
-            new_action = random.randrange(1, 4)
+            randomNum = random.randint(1, 10)
+            if randomNum == 1:
+                env.act(119)
+                new_action = 119
+            else:
+                env.act(None)
+                new_action = None
         else:
-            action = model.predict([prev_obs.reshape(20, 26, 1)])[0]
+            action = model.predict([prev_obs.reshape(80, 80, 1)])[0]
             new_action = np.argmax(action)
+            if new_action == 0:
+                new_action = 119
+                env.act(119)
+            else:
+                new_action = None
+                env.act(None)
 
 
         choices.append(new_action)
-        new_observation, reward, done, info = env.step(new_action)
-        inx, iny, inc = env.observation_space.shape
-        new_observation = cv2.resize(cv2.cvtColor(new_observation, cv2.COLOR_RGBA2GRAY), (int(inx / 8), int(iny / 8)))
+        new_observation = cv2.resize(env.getScreenGrayscale(), (80, 80))
         prev_obs = new_observation
         game_memory.append([new_observation, new_action])
-        score += reward
-        if done:
+        score = env.score()
+        if env.game_over():
             break
+    env.reset_game()
     scores.append(score)
+    if score >= score_requirement:
+        accepted_scores.append(score)
 
 print('Average Score:', sum(scores) / len(scores))
-print('choice 1:{}  choice 0:{}'.format(choices.count(1) / len(choices), choices.count(0) / len(choices)))
-print('choice 2:{}  choice 3:{}'.format(choices.count(2) / len(choices), choices.count(3) / len(choices)))
-print('choice 4:{}  choice 5:{}'.format(choices.count(4) / len(choices), choices.count(5) / len(choices)))
+print('Success rate:', len(accepted_scores) / len(scores))
 print(score_requirement)
-
