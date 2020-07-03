@@ -78,7 +78,7 @@ def initial_population():
 
 
 def neural_network_model(input_size, input_size2):
-    network = input_data(shape=[None, input_size, input_size2, 1], name='input')
+    net = input_data(shape=[None, input_size, input_size2, 1], name='input')
 
     net = tflearn.conv_2d(net, 64, 3, activation='relu', bias=False)
     # Residual blocks
@@ -92,10 +92,10 @@ def neural_network_model(input_size, input_size2):
     net = tflearn.global_avg_pool(net)
     # Regression
 
-    network = fully_connected(network, 2, activation='softmax')
-    network = regression(network, optimizer='momentum', learning_rate=0.1, loss='categorical_crossentropy',
+    net = fully_connected(net, 2, activation='softmax')
+    net = regression(net, optimizer='momentum', learning_rate=0.1, loss='categorical_crossentropy',
                          name='targets')
-    model = tflearn.DNN(network)
+    model = tflearn.DNN(net)
 
     return model
 
