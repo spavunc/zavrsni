@@ -26,9 +26,9 @@ LR = 1e-3
 #print(env.observation_space)
 #print(env.action_space)
 #env.reset()
-goal_steps = 500
-score_requirement = -4
-initial_games = 10000
+goal_steps = 10000
+score_requirement = 30
+initial_games = 1000
 
 
 def initial_population():
@@ -40,14 +40,37 @@ def initial_population():
         score = 0
         game_memory = []
         for _ in range(goal_steps):
-            randomNum = random.randint(1, 10)
-            if randomNum == 1:
+            game_state = env.getGameState()
+            game_state_val = game_state.values()
+            player_y = list(game_state_val)[0]
+            next_pipe_dist_to_player = list(game_state_val)[2]
+            next_pipe_top_y = list(game_state_val)[3]
+            next_pipe_bottom_y = list(game_state_val)[4]
+
+            if next_pipe_bottom_y <= player_y:
                 env.act(119)
                 action = 119
-            else:
+            elif next_pipe_top_y >= player_y:
                 env.act(None)
                 action = None
-            observation = cv2.resize(env.getScreenGrayscale(), (80, 80))
+            else:
+                distance_top = player_y - next_pipe_top_y
+                distance_bottom = next_pipe_bottom_y - player_y
+                if distance_top > distance_bottom:
+                    env.act(119)
+                    action = 119
+                elif distance_bottom > distance_top:
+                    env.act(None)
+                    action = None
+                else:
+                    randomNum = random.randint(0, 1)
+                    if randomNum == 0:
+                        env.act(119)
+                        action = 119
+                    else:
+                        env.act(None)
+                        action = None
+            observation = cv2.cvtColor(cv2.resize(env.getScreenRGB(), (80, 80)), cv2.COLOR_BGR2GRAY)
             game_memory.append([observation, action])
             score = env.score()
             if env.game_over(): break
@@ -67,7 +90,7 @@ def initial_population():
 
     # just in case you wanted to reference later
     training_data_save = np.array(training_data)
-    np.save('flappy3.npy', training_data_save)
+    np.save('flappy2.npy', training_data_save)
 
     # some stats here, to further illustrate the neural network magic!
     print('Average accepted score:', mean(accepted_scores))
@@ -80,24 +103,18 @@ def initial_population():
 def neural_network_model(input_size, input_size2):
     network = input_data(shape=[None, input_size, input_size2, 1], name='input')
 
-    network = conv_2d(network, 96, 11, strides=4, activation='relu')
-    network = max_pool_2d(network, 3, strides=2)
-    network = local_response_normalization(network)
-    network = conv_2d(network, 256, 5, activation='relu')
-    network = max_pool_2d(network, 3, strides=2)
-    network = local_response_normalization(network)
-    network = conv_2d(network, 384, 3, activation='relu')
-    network = conv_2d(network, 384, 3, activation='relu')
-    network = conv_2d(network, 256, 3, activation='relu')
-    network = max_pool_2d(network, 3, strides=2)
-    network = local_response_normalization(network)
-    network = fully_connected(network, 4096, activation='tanh')
+    network = conv_2d(network, 32, 3, activation='relu', strides=4)
+    network = conv_2d(network, 64, 5, activation='relu', strides=2)
+    network = conv_2d(network, 64, 3, activation='relu', strides=1)
+    network = fully_connected(network, 256, activation='relu')
     network = dropout(network, 0.5)
-    network = fully_connected(network, 4096, activation='tanh')
+    network = fully_connected(network, 256, activation='relu')
+    network = dropout(network, 0.5)
+    network = fully_connected(network, 256, activation='relu')
     network = dropout(network, 0.5)
 
     network = fully_connected(network, 2, activation='softmax')
-    network = regression(network, optimizer='momentum', learning_rate=0.01, loss='categorical_crossentropy',
+    network = regression(network, optimizer='adam', learning_rate=0.001, loss='categorical_crossentropy',
                          name='targets')
     model = tflearn.DNN(network)
 
@@ -113,35 +130,57 @@ def train_model(training_data, model=False):
     if not model:
         model = neural_network_model(input_size = len(X[0]), input_size2 = len(X[0][0]))
 
-    model.fit({'input': X}, {'targets': y}, n_epoch=10, snapshot_step=500, show_metric=True,
-              run_id='openai_learning')
+    model.fit({'input': X}, {'targets': y}, n_epoch=5, snapshot_step=500, show_metric=True,
+              run_id='openai_learning', validation_set=0.1)
     return model
 
 
 
-training_data = initial_population()
-#training_data = np.load('flappy.npy')
+#training_data = initial_population()
+training_data = np.load('flappy2.npy')
 model = train_model(training_data)
-model.save('flappy.model')
-#model = neural_network_model(36, 64)
+model.save('flappy2.model')
+#model = neural_network_model(80, 80)
 #model.load('flappy.model')
 scores = []
 accepted_scores = []
 choices = []
-for each_game in range(1000):
+for each_game in range(100):
     score = 0
     game_memory = []
     prev_obs = []
     for _ in range(goal_steps):
-        #env.render()
         if len(prev_obs) == 0:
-            randomNum = random.randint(1, 10)
-            if randomNum == 1:
+            game_state = env.getGameState()
+            game_state_val = game_state.values()
+            player_y = list(game_state_val)[0]
+            next_pipe_dist_to_player = list(game_state_val)[2]
+            next_pipe_top_y = list(game_state_val)[3]
+            next_pipe_bottom_y = list(game_state_val)[4]
+
+            if next_pipe_bottom_y <= player_y:
                 env.act(119)
                 new_action = 119
-            else:
+            elif next_pipe_top_y >= player_y:
                 env.act(None)
                 new_action = None
+            else:
+                distance_top = player_y - next_pipe_top_y
+                distance_bottom = next_pipe_bottom_y - player_y
+                if distance_top > distance_bottom:
+                    env.act(119)
+                    new_action = 119
+                elif distance_bottom > distance_top:
+                    env.act(None)
+                    new_action = None
+                else:
+                    randomNum = random.randint(0, 1)
+                    if randomNum == 0:
+                        env.act(119)
+                        new_action = 119
+                    else:
+                        env.act(None)
+                        new_action = None
         else:
             action = model.predict([prev_obs.reshape(80, 80, 1)])[0]
             new_action = np.argmax(action)
